@@ -1,324 +1,532 @@
 import { useEffect, useRef, useState } from "react";
-import {  View,  Text,  StyleSheet,  Pressable,  Animated,TextInput
-} from "react-native";
+import { View, Text, StyleSheet, Animated, ScrollView } from "react-native";
 
 import socket from "../services/socket";
 
+import TopBar from "../components/TopBar";
+import BettingPanel from "../components/BettingPanel";
+
+const BASE_URL = "https://youcashm-backend.onrender.com";
+
+type TrailPoint = {
+  x: number;
+  y: number;
+  opacity: number;
+};
+
 export default function GameScreen() {
-  const [multiplier, setMultiplier] = useState(1.0);
+  // ======================
+  // GAME STATE
+  // ======================
+  const [multiplier, setMultiplier] = useState(1);
   const [status, setStatus] = useState("WAITING");
   const [crashPoint, setCrashPoint] = useState<number | null>(null);
 
   const [betAmount, setBetAmount] = useState("100");
   const [roundId, setRoundId] = useState<string | null>(null);
-  const [betId, setBetId] = useState(null);
-  // Plane animation
+  const [betId, setBetId] = useState<string | null>(null);
+  const [roundHistory, setRoundHistory] = useState<number[]>([]);
+
+  const [nextRoundCountdown, setNextRoundCountdown] = useState(5);
+  const [isBettingPhase, setIsBettingPhase] = useState(true);
+
+  const [, forceRender] = useState(0);
+
+  // ======================
+  // 🚀 CONTROL FLAG (IMPORTANT FIX)
+  // ======================
+  const isRunningRef = useRef(false);
+
+  // ======================
+  // PLANE ENGINE
+  // ======================
+  const planeX = useRef(new Animated.Value(0)).current;
   const planeY = useRef(new Animated.Value(0)).current;
-  const getPlaneOffset = (multiplier) => {
-  // slow start → fast rise curve
-  return Math.pow(multiplier, 1.6) * -15;
-};
-const targetMultiplier = useRef(1.0);
+  const planeRotate = useRef(new Animated.Value(0)).current;
+
+  const trail = useRef<TrailPoint[]>([]);
+  const frameRef = useRef<number | null>(null);
+
+  // ======================
+  // MULTIPLIER ENGINE
+  // ======================
+  const targetMultiplier = useRef(1);
+  const displayedMultiplier = useRef(1);
+  const planePos = useRef({ x: 0, y: 0 });
+
+  const frameCountRef = useRef(0);
+
+  // ======================
+  // KEEP STATUS IN SYNC
+  // ======================
+  const statusRef = useRef(status);
 
   useEffect(() => {
-  socket.on("connect", () => {
-    console.log("✅ SOCKET CONNECTED:", socket.id);
-  });
+    statusRef.current = status;
+  }, [status]);
 
-  socket.on("connect_error", (err) => {
-    console.log("❌ CONNECTION ERROR:", err.message);
-  });
+  // ======================
+  // SOCKET EVENTS
+  // ======================
+  // ======================
+// SOCKET EVENTS
+// ======================
+useEffect(() => {
+  socket.off("roundStart");
+  socket.off("multiplier");
+  socket.off("roundCrash");
+  socket.off("roundWaiting");
 
-  socket.on("connected", (data) => {
-    console.log("✅ BACKEND CONFIRMED:", data);
-  });
-
+  // 🚀 ROUND START
   socket.on("roundStart", (data: any) => {
     setStatus("RUNNING");
-    setMultiplier(1.0);
+    setIsBettingPhase(false);
 
     setRoundId(data.roundId);
-    setCrashPoint(data.crashPoint);
 
-    Animated.timing(planeY, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    // reset crash
+    setCrashPoint(null);
+
+    // START ENGINE
+    isRunningRef.current = true;
+
+    // RESET MULTIPLIER ENGINE
+    displayedMultiplier.current = 1;
+    targetMultiplier.current = 1;
+
+    setMultiplier(1);
+
+    // RESET PLANE
+    planeX.setValue(0);
+    planeY.setValue(0);
+
+    // RESET TRAIL
+    trail.current = [];
   });
 
+  // 📈 LIVE MULTIPLIER
   socket.on("multiplier", (data: any) => {
-    const currentMultiplier = Number(data.multiplier);
-
-    setMultiplier(currentMultiplier);
-    targetMultiplier.current = currentMultiplier;
-
-    // ✈️ SIMPLE SMOOTH ANIMATION (NO COMPLEX INTERVAL)
-    Animated.spring(planeY, {
-      toValue: getPlaneOffset(currentMultiplier),
-      useNativeDriver: true,
-      speed: 20,
-      damping: 15,
-      mass: 0.6,
-    }).start();
+    targetMultiplier.current = Number(data.multiplier);
   });
 
+  // 💥 ROUND CRASH
   socket.on("roundCrash", (data: any) => {
     setStatus("CRASHED");
+    setIsBettingPhase(true);
+
+    isRunningRef.current = false;
+
+    // clear active bet
+    setBetId(null);
+
+    let countdown = 5;
+    setNextRoundCountdown(countdown);
+
+    const timer = setInterval(() => {
+      countdown -= 1;
+      setNextRoundCountdown(countdown);
+
+      if (countdown <= 0) {
+        clearInterval(timer);
+      }
+    }, 1000);
 
     if (data?.crashPoint) {
-      setCrashPoint(Number(data.crashPoint));
-    }
+      const point = Number(data.crashPoint);
 
-    Animated.sequence([
-      Animated.timing(planeY, {
-        toValue: getPlaneOffset(multiplier) + 20,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-      Animated.timing(planeY, {
-        toValue: getPlaneOffset(multiplier),
-        duration: 120,
-        useNativeDriver: true,
-      }),
-    ]).start();
+      setCrashPoint(point);
+
+      // ✅ LIVE HISTORY UPDATE
+      setRoundHistory((prev) => {
+        const updated = [point, ...prev];
+        return updated.slice(0, 20);
+      });
+    }
+  });
+
+  // ⏳ WAITING
+  socket.on("roundWaiting", (data: any) => {
+    setStatus("WAITING");
+    setIsBettingPhase(true);
+
+    isRunningRef.current = false;
+
+    setNextRoundCountdown(data?.countdown || 5);
+
+    planeX.setValue(0);
+    planeY.setValue(0);
+
+    trail.current = [];
   });
 
   return () => {
-    socket.off("connect");
-    socket.off("connect_error");
-    socket.off("connected");
     socket.off("roundStart");
     socket.off("multiplier");
     socket.off("roundCrash");
+    socket.off("roundWaiting");
   };
-// eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
-const placeBet = async () => {
-  try {
-    if (!roundId) {
-      console.log("❌ No active round");
-      return;
-    }
+  // ======================
+  // 🚀 ANIMATION ENGINE (CONTROLLED)
+  // ======================
+  useEffect(() => {
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate);
 
-    const response = await fetch(
-      "https://youcashm-backend.onrender.com/api/bet",
-      {
+      // ❌ BLOCK IF NOT RUNNING
+      if (!isRunningRef.current) return;
+
+      // ======================
+      // 🎮 ANIMATION SPEED CONTROL (TWEAK THIS)
+      // ======================
+      const SMOOTHNESS = 0.18; // higher = faster response (0.1–0.3 recommended)
+
+      // 🔥 REMOVE LAG BETWEEN BACKEND AND FRONTEND
+      displayedMultiplier.current =
+        displayedMultiplier.current +
+        (targetMultiplier.current - displayedMultiplier.current) *
+          SMOOTHNESS;
+
+      const m = displayedMultiplier.current;
+
+      // ======================
+      // 🎯 MULTIPLIER UPDATE RATE CONTROL
+      // ======================
+      frameCountRef.current++;
+
+      // lower number = more UI updates
+      if (frameCountRef.current % 2 === 0) {
+        setMultiplier(m);
+      }
+
+      // ======================
+      // ✈️ PLANE MOVEMENT MODEL (TWEAKABLE)
+      // ======================
+
+      // X movement speed
+      const X_SPEED = 120;
+
+      // Y curve intensity (higher = steeper climb)
+      const Y_INTENSITY = 65;
+      
+// ======================
+// FLIGHT PATH
+// ======================
+
+// raw movement
+let x = (m - 1) * X_SPEED;
+let y = -Math.pow(m - 1, 1.45) * Y_INTENSITY;
+
+planePos.current = { x, y };
+
+// 🚧 HORIZONTAL LIMIT
+const MAX_X = 260;
+
+// 🚧 VERTICAL LIMIT
+const MAX_Y = -250;
+
+// keep plane inside box
+if (x > MAX_X) x = MAX_X;
+if (y < MAX_Y) y = MAX_Y;
+
+// ✈️ SMOOTH SOARING EFFECT
+
+// slower movement
+const swing = Math.sin(Date.now() / 900) * 18;
+
+// start soaring earlier
+if (m > 2.5) {
+  y += swing;
+}
+
+      planeX.setValue(x);
+      planeY.setValue(y);
+
+// ======================
+// ✈️ ROTATION LOGIC
+// ======================
+
+// slope based rotation (movement direction feel)
+const angle = Math.atan2(-y, x) * (180 / Math.PI);
+
+// smooth it (VERY important)
+planeRotate.setValue(angle);
+      // ======================
+      // TRAIL EFFECT
+      // ======================
+      trail.current.push({ x, y, opacity: 1 });
+
+      trail.current = trail.current
+        .map((p) => ({ ...p, opacity: p.opacity - 0.03 }))
+        .filter((p) => p.opacity > 0);
+
+      forceRender((v) => (v + 1) % 1000);
+    };
+
+    frameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ======================
+  // BET
+  // ======================
+  const placeBet = async () => {
+    if (!roundId) return;
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/bet`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: "player1",
           amount: Number(betAmount),
           roundId,
         }),
-      }
-    );
+      });
 
-    const data = await response.json();
-
-    if (data.success === false) {
-      console.log("❌ BET REJECTED:", data.message);
-      return;
+      const data = await res.json();
+      setBetId(data.id || data.bet?.id);
+    } catch (err) {
+      console.log("BET ERROR:", err);
     }
+  };
 
-    console.log("✅ BET ACCEPTED:", data);
+  // ======================
+  // CASHOUT
+  // ======================
+  const cashout = async () => {
+    if (!betId) return;
 
-    // 🔥 STORE BET ID
-    setBetId(data.id || data.bet?.id);
-
-  } catch (error) {
-    console.log("❌ BET ERROR:", error);
-  }
-};
-const cashout = async () => {
-  try {
-    if (!betId) {
-      console.log("❌ No bet to cashout");
-      return;
-    }
-
-    const response = await fetch(
-      "https://youcashm-backend.onrender.com/api/cashout",
-      {
+    try {
+      const res = await fetch(`${BASE_URL}/api/cashout`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          betId,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ betId }),
+      });
+
+      const data = await res.json();
+
+      if (data?.success) {
+        setBetId(null);
       }
-    );
-
-    const data = await response.json();
-
-    if (!data.success) {
-      console.log("❌ CASHOUT FAILED:", data.message);
-      return;
+    } catch (err) {
+      console.log("CASHOUT ERROR:", err);
     }
-
-    console.log("💰 CASHOUT SUCCESS:", data.bet);
-
-    // reset bet
-    setBetId(null);
-
-  } catch (error) {
-    console.log("❌ CASHOUT ERROR:", error);
-  }
-};
-
+  };
+ 
+  // ======================
+  // UI
+  // ======================
   return (
-    <View style={styles.container}>
-      {/* TITLE */}
-      <Text style={styles.title}>youCashM</Text>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <View style={styles.container}>
+      
+      <TopBar history={roundHistory} />
 
-      {/* STATUS */}
-      <Text style={styles.status}>
-        {status}
-      </Text>
+        <View style={styles.gameArea}>
+          <View style={styles.grid} />
+        
+          {/* WAITING SCREEN */}
+          
+{status !== "RUNNING" && (
+  <View style={styles.waitingScreen}>
+    <Text style={styles.waitingLogo}>
+      youCashM ✈️
+    </Text>
 
-      {/* GAME AREA */}
-      <View style={styles.gameArea}>
-        {/* PLANE */}
-        <Animated.View
-          style={[
-            styles.planeContainer,
-            {
-              transform: [{ translateY: planeY }],
-            },
-          ]}
-        >
-          <Text style={styles.plane}>✈️</Text>
-        </Animated.View>
+    <Text style={styles.waitingSub}>
+      GodSpeed Official Game
+    </Text>
 
-        {/* MULTIPLIER */}
-        <Text style={styles.multiplier}>
-          {multiplier.toFixed(2)}x
-        </Text>
+    <Text style={styles.waitingYear}>
+      Since 2026
+    </Text>
+  </View>
+)}
+{/* TRAIL */}
+{trail.current.map((p, i) => (
+  <View
+    key={i}
+    style={[
+      styles.trail,
+      {
+        left: p.x,
+        top: p.y,
+        opacity: p.opacity,
+      },
+    ]}
+  />
+))}
 
-        {/* CRASH INFO */}
-        {status === "CRASHED" && crashPoint && (
-          <Text style={styles.crashText}>
-            Crashed at {crashPoint.toFixed(2)}x
-          </Text>
-        )}
+{/* PLANE */}
+<Animated.View
+  style={[
+    styles.plane,
+    {
+      transform: [
+        { translateX: planeX },
+        { translateY: planeY },
+        {
+          rotate: planeRotate.interpolate({
+            inputRange: [-90, 0, 90],
+            outputRange: ["-45deg", "0deg", "45deg"],
+          }),
+        },
+      ],
+    },
+  ]}
+>
+  <Text style={styles.planeText}>✈️</Text>
+</Animated.View>
+
+{/* MULTIPLIER */}
+<Text style={styles.multiplier}>{multiplier.toFixed(2)}x</Text>
+
+{/* STATUS */}
+<Text style={styles.status}>{status}</Text>
+
+{/* CRASH */}
+{status === "CRASHED" && crashPoint && (
+  <Text style={styles.crash}>
+    💥 CRASHED AT {crashPoint.toFixed(2)}x
+  </Text>
+)}
+          {/* COUNTDOWN */}
+          {isBettingPhase && (
+            <View style={styles.countdown}>
+              <Text style={styles.countdownText}>
+                NEXT ROUND IN {nextRoundCountdown}s
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <BettingPanel
+          betAmount={betAmount}
+          setBetAmount={setBetAmount}
+          placeBet={placeBet}
+          cashout={cashout}
+        />
       </View>
-<TextInput
-  style={styles.input}
-  value={betAmount}
-  onChangeText={setBetAmount}
-  keyboardType="numeric"
-  placeholder="Enter Bet Amount"
-  placeholderTextColor="#666"
-/>
-      {/* BUTTONS */}
-      <View style={styles.buttonRow}>
-       <Pressable style={styles.betButton} onPress={placeBet}>
-          <Text style={styles.btnText}>BET</Text>
-        </Pressable>
-
-       <Pressable  style={styles.cashoutButton}
-         onPress={cashout}>
-          <Text style={styles.btnText}>CASHOUT</Text>
-        </Pressable>
-      </View>
-    </View>
+    </ScrollView>
   );
 }
 
+// ======================
+// STYLES
+// ======================
 const styles = StyleSheet.create({
+  scroll: { flexGrow: 1 },
+
   container: {
     flex: 1,
     backgroundColor: "#0b0b0f",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 20,
-  },
-
-  title: {
-    fontSize: 30,
-    color: "#00ff88",
-    fontWeight: "bold",
-    marginBottom: 20,
-  },
-
-  status: {
-    color: "#888",
-    marginBottom: 20,
-    fontSize: 14,
-    letterSpacing: 2,
+    paddingHorizontal: 15,
+    paddingTop: 40,
   },
 
   gameArea: {
-    width: "100%",
-    height: 320,
-    borderRadius: 20,
-    backgroundColor: "#12131a",
+    height: 420,
+    backgroundColor: "#0f1118",
+    borderRadius: 22,
+    overflow: "hidden",
     justifyContent: "center",
     alignItems: "center",
-    overflow: "hidden",
-    marginBottom: 40,
+    marginBottom: 15,
   },
 
-  planeContainer: {
-    position: "absolute",
-    bottom: 80,
+  grid: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.05,
+    borderWidth: 1,
+    borderColor: "#fff",
   },
+
+  trail: {
+  position: "absolute",
+  width: 16,
+  height: 4,
+  borderRadius: 4,
+  backgroundColor: "#ff3b3b", // brighter red
+  zIndex: 10,
+},
 
   plane: {
-    fontSize: 42,
+    position: "absolute",
+    left: 40,
+    bottom: 90,
+  },
+
+  planeText: {
+    fontSize: 48,
   },
 
   multiplier: {
-    fontSize: 64,
-    fontWeight: "bold",
-    color: "white",
+    fontSize: 70,
+    fontWeight: "900",
+    color: "#fff",
   },
 
-  crashText: {
-    marginTop: 15,
-    color: "#ff4444",
-    fontSize: 16,
+  status: {
+    marginTop: 6,
+    color: "#00ff88",
     fontWeight: "bold",
   },
 
-  input: {
-  width: 220,
-  backgroundColor: "#15151d",
-  color: "white",
-  paddingVertical: 12,
-  paddingHorizontal: 15,
-  borderRadius: 10,
-  marginBottom: 25,
-  fontSize: 18,
-  borderWidth: 1,
-  borderColor: "#222",
+  crash: {
+    marginTop: 10,
+    color: "#ff3b3b",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+
+  countdown: {
+    position: "absolute",
+    bottom: 20,
+    backgroundColor: "#161821",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+
+  countdownText: {
+    color: "#00ff88",
+    fontWeight: "bold",
+  },
+  waitingScreen: {
+  position: "absolute",
+  alignItems: "center",
+  justifyContent: "center",
 },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 20,
-  },
 
-  betButton: {
-    backgroundColor: "#1f6fff",
-    paddingVertical: 14,
-    paddingHorizontal: 35,
-    borderRadius: 12,
-  },
+waitingLogo: {
+  color: "#ff1744",
+  fontSize: 34,
+  fontWeight: "900",
+},
 
-  cashoutButton: {
-    backgroundColor: "#00ff88",
-    paddingVertical: 14,
-    paddingHorizontal: 35,
-    borderRadius: 12,
-  },
+waitingSub: {
+  color: "#00ff88",
+  fontSize: 16,
+  marginTop: 10,
+  fontWeight: "bold",
+},
 
-  btnText: {
-    color: "#000",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
+waitingYear: {
+  color: "#888",
+  marginTop: 6,
+},
+rope: {
+  position: "absolute",
+  height: 2,
+  backgroundColor: "#00ff88",
+  opacity: 0.6,
+},
 });
