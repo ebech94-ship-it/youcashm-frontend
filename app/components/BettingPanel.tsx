@@ -11,6 +11,20 @@ interface Props {
   setBetAmount: (value: string) => void;
   placeBet: () => void;
   cashout: () => void;
+
+  autoTab: boolean;
+  setAutoTab: (v: boolean) => void;
+
+  autoBetEnabled: boolean;
+  setAutoBetEnabled: (v: boolean) => void;
+
+  autoCashoutEnabled: boolean;
+  setAutoCashoutEnabled: (v: boolean) => void;
+
+  autoCashout: number | null;
+  setAutoCashout: (v: number | null) => void;
+
+  playersBetting: number;
 }
 
 export default function BettingPanel({
@@ -18,22 +32,108 @@ export default function BettingPanel({
   setBetAmount,
   placeBet,
   cashout,
-}: Props) {
+
+  autoTab,
+  setAutoTab,
+
+  autoBetEnabled,
+  setAutoBetEnabled,
+
+  autoCashoutEnabled,
+  setAutoCashoutEnabled,
+
+  autoCashout,
+  setAutoCashout,
+
+  playersBetting,
+}: Props){
 
   const quickAmounts = [100, 200, 500, 1000];
   return (
     <View style={styles.container}>
 
       {/* TOP */}
-      <View style={styles.toggleRow}>
-        <View style={styles.activeTab}>
-          <Text style={styles.activeTabText}>Bet</Text>
-        </View>
+     <View style={styles.toggleRow}>
 
-        <View style={styles.inactiveTab}>
-          <Text style={styles.inactiveTabText}>Auto</Text>
-        </View>
-      </View>
+  <Pressable
+    style={[styles.tab, !autoTab && styles.activeTab]}
+    onPress={() => setAutoTab(false)}
+  >
+    <Text style={!autoTab ? styles.activeTabText : styles.inactiveTabText}>
+      Bet
+    </Text>
+  </Pressable>
+
+  <Pressable
+    style={[styles.tab, autoTab && styles.activeTab]}
+    onPress={() => setAutoTab(true)}
+  >
+    <Text style={autoTab ? styles.activeTabText : styles.inactiveTabText}>
+      Auto
+    </Text>
+  </Pressable>
+
+</View>
+{autoTab && (
+  <View style={styles.autoRow}>
+
+    {/* AUTO BET TOGGLE */}
+    <View style={styles.autoBox}>
+      <Text style={styles.autoTitle}>Auto Bet</Text>
+
+      <Pressable
+  style={[
+    styles.switchBase,
+    autoBetEnabled && styles.switchOn
+  ]}
+  onPress={() => setAutoBetEnabled(!autoBetEnabled)}
+>
+  <View
+    style={[
+      styles.switchKnob,
+      autoBetEnabled && styles.knobOn
+    ]}
+  />
+</Pressable>
+    </View>
+
+    {/* AUTO CASHOUT TOGGLE */}
+    <View style={styles.autoBox}>
+      <Text style={styles.autoTitle}>Auto Cashout</Text>
+
+     <Pressable
+  style={[
+    styles.switchBase,
+    autoCashoutEnabled && styles.switchOn
+  ]}
+  onPress={() =>
+    setAutoCashoutEnabled(!autoCashoutEnabled)
+  }
+>
+  <View
+    style={[
+      styles.switchKnob,
+      autoCashoutEnabled && styles.knobOn
+    ]}
+  />
+</Pressable>
+    </View>
+
+    {/* AUTO CASHOUT INPUT (EXPANDED) */}
+    <TextInput
+      style={styles.autoInput}
+      placeholder="1.50x"
+      placeholderTextColor="#666"
+      keyboardType="decimal-pad"
+    value={autoCashout !== null ? String(autoCashout) : ""}
+      onChangeText={(v) => {
+        const num = parseFloat(v);
+        setAutoCashout(isNaN(num) ? null : num);
+      }}
+    />
+
+  </View>
+)}
 
       {/* INPUT */}
       <View style={styles.inputRow}>
@@ -90,6 +190,9 @@ export default function BettingPanel({
           <Text style={styles.actionText}>CASHOUT</Text>
         </Pressable>
       </View>
+      <Text style={{ color: "#888", marginBottom: 10 }}>
+  {playersBetting} players betting
+</Text>
       </View>
   );
 }
@@ -210,4 +313,68 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 18,
     },
+    tab: {
+  flex: 1,
+  paddingVertical: 12,
+  alignItems: "center",
+},
+autoRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  marginBottom: 15,
+},
+
+autoBox: {
+  flex: 1,
+  alignItems: "center",
+  backgroundColor: "#1a1c24",
+  paddingVertical: 10,
+  borderRadius: 12,
+},
+
+autoTitle: {
+  color: "#aaa",
+  fontSize: 12,
+  marginBottom: 8,
+},
+
+/* SWITCH BASE */
+switchBase: {
+  width: 42,
+  height: 22,
+  borderRadius: 20,
+  backgroundColor: "#333",
+  justifyContent: "center",
+  padding: 2,
+},
+
+switchOn: {
+  backgroundColor: "#22c55e",
+},
+
+/* KNOB */
+switchKnob: {
+  width: 18,
+  height: 18,
+  borderRadius: 9,
+  backgroundColor: "#fff",
+},
+
+knobOn: {
+  transform: [{ translateX: 20 }],
+},
+
+/* INPUT */
+autoInput: {
+  flex: 1.2,
+  backgroundColor: "#1a1c24",
+  color: "white",
+  textAlign: "center",
+  borderRadius: 12,
+  fontSize: 18,
+  fontWeight: "bold",
+  paddingVertical: 10,
+},
 });

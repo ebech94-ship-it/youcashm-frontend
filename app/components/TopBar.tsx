@@ -11,9 +11,10 @@ import {
 
 type Props = {
   history: number[];
+  onlineUsers: number;
 };
 
-export default function TopBar({ history }: Props) {
+export default function TopBar({ history, onlineUsers }: Props) {
   const [showBalance, setShowBalance] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   
@@ -59,7 +60,9 @@ export default function TopBar({ history }: Props) {
     {/* LEFT */}
     <View>
       <Text style={styles.logo}>youCashM</Text>
-      <Text style={styles.online}>2,978 Online</Text>
+     <Text style={styles.online}>
+  {onlineUsers.toLocaleString()} Online
+</Text>
     </View>
 
     {/* CENTER (HISTORY + MINI ROUNDS) */}

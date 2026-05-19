@@ -29,6 +29,7 @@ export default function GameScreen() {
 
   const [nextRoundCountdown, setNextRoundCountdown] = useState(5);
   const [isBettingPhase, setIsBettingPhase] = useState(true);
+  const cashoutLock = useRef(false);
 
   const [, forceRender] = useState(0);
 
@@ -43,8 +44,15 @@ export default function GameScreen() {
   const planeX = useRef(new Animated.Value(0)).current;
   const planeY = useRef(new Animated.Value(0)).current;
   const planeRotate = useRef(new Animated.Value(0)).current;
+  const [onlineUsers, setOnlineUsers] = useState(0);
+const [playersBetting, setPlayersBetting] = useState(0);
 
-  const trail = useRef<TrailPoint[]>([]);
+const [autoTab, setAutoTab] = useState(false);
+const [autoBetEnabled, setAutoBetEnabled] = useState(false);
+const [autoCashoutEnabled, setAutoCashoutEnabled] = useState(false);
+
+const [autoCashout, setAutoCashout] = useState<number | null>(null); 
+const trail = useRef<TrailPoint[]>([]);
   const frameRef = useRef<number | null>(null);
 
   // ======================
@@ -77,6 +85,14 @@ useEffect(() => {
   socket.off("roundCrash");
   socket.off("roundWaiting");
 
+  socket.on("onlineUsers", (data: any) => {
+  setOnlineUsers(data.count || 0);
+});
+
+socket.on("playersBetting", (data: any) => {
+  setPlayersBetting(data.count || 0);
+});
+
   // 🚀 ROUND START
   socket.on("roundStart", (data: any) => {
     setStatus("RUNNING");
@@ -102,6 +118,8 @@ useEffect(() => {
 
     // RESET TRAIL
     trail.current = [];
+    // ✅ RESET CASHOUT LOCK HERE
+  cashoutLock.current = false;
   });
 
   // 📈 LIVE MULTIPLIER
@@ -131,17 +149,28 @@ useEffect(() => {
       }
     }, 1000);
 
-    if (data?.crashPoint) {
-      const point = Number(data.crashPoint);
+   if (data?.crashPoint) {
+  const point = Number(data.crashPoint);
 
-      setCrashPoint(point);
+  // ✅ FORCE FRONTEND TO EXACT BACKEND VALUE
+  displayedMultiplier.current = point;
+  targetMultiplier.current = point;
 
-      // ✅ LIVE HISTORY UPDATE
-      setRoundHistory((prev) => {
-        const updated = [point, ...prev];
-        return updated.slice(0, 20);
-      });
-    }
+  // ✅ UPDATE UI IMMEDIATELY
+  setMultiplier(point);
+
+  // ✅ SHOW CRASH VALUE
+  setCrashPoint(point);
+
+  // ✅ STOP PLANE EXACTLY THERE
+  isRunningRef.current = false;
+
+  // ✅ LIVE HISTORY UPDATE
+  setRoundHistory((prev) => {
+    const updated = [point, ...prev];
+    return updated.slice(0, 20);
+  });
+}
   });
 
   // ⏳ WAITING
@@ -175,7 +204,7 @@ useEffect(() => {
   useEffect(() => {
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
-
+    
       // ❌ BLOCK IF NOT RUNNING
       if (!isRunningRef.current) return;
 
@@ -190,7 +219,16 @@ useEffect(() => {
         (targetMultiplier.current - displayedMultiplier.current) *
           SMOOTHNESS;
 
-      const m = displayedMultiplier.current;
+     // 2. NOW define m
+  const m = displayedMultiplier.current;
+  
+
+  // 3. AUTO CASHOUT (SAFE PLACE)
+  if (autoTab && betId && autoCashout !== null) {
+    if (m >= autoCashout) {
+      cashout();
+    }
+  }
 
       // ======================
       // 🎯 MULTIPLIER UPDATE RATE CONTROL
@@ -298,29 +336,37 @@ planeRotate.setValue(angle);
     }
   };
 
-  // ======================
-  // CASHOUT
-  // ======================
   const cashout = async () => {
-    if (!betId) return;
+  if (!betId) return;
 
-    try {
-      const res = await fetch(`${BASE_URL}/api/cashout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ betId }),
-      });
+  // 🔒 prevent double cashout
+  if (cashoutLock.current) return;
 
-      const data = await res.json();
+  cashoutLock.current = true;
 
-      if (data?.success) {
-        setBetId(null);
-      }
-    } catch (err) {
-      console.log("CASHOUT ERROR:", err);
+  try {
+    const res = await fetch(`${BASE_URL}/api/cashout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ betId }),
+    });
+
+    const data = await res.json();
+
+    if (data?.success) {
+      setBetId(null);
+    } else {
+      // ❌ if failed, unlock so user can retry
+      cashoutLock.current = false;
     }
-  };
- 
+
+  } catch (err) {
+    console.log("CASHOUT ERROR:", err);
+
+    // ❌ unlock on error too
+    cashoutLock.current = false;
+  }
+};
   // ======================
   // UI
   // ======================
@@ -328,7 +374,9 @@ planeRotate.setValue(angle);
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
       <View style={styles.container}>
       
-      <TopBar history={roundHistory} />
+    <TopBar 
+  history={roundHistory} 
+  onlineUsers={onlineUsers}/>
 
         <View style={styles.gameArea}>
           <View style={styles.grid} />
@@ -408,12 +456,26 @@ planeRotate.setValue(angle);
           )}
         </View>
 
-        <BettingPanel
-          betAmount={betAmount}
-          setBetAmount={setBetAmount}
-          placeBet={placeBet}
-          cashout={cashout}
-        />
+       <BettingPanel
+  betAmount={betAmount}
+  setBetAmount={setBetAmount}
+  placeBet={placeBet}
+  cashout={cashout}
+
+  autoTab={autoTab}
+  setAutoTab={setAutoTab}
+
+  autoBetEnabled={autoBetEnabled}
+  setAutoBetEnabled={setAutoBetEnabled}
+
+  autoCashoutEnabled={autoCashoutEnabled}
+  setAutoCashoutEnabled={setAutoCashoutEnabled}
+
+  autoCashout={autoCashout}
+  setAutoCashout={setAutoCashout}
+
+  playersBetting={playersBetting}
+/>
       </View>
     </ScrollView>
   );
